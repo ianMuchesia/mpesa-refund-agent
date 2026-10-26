@@ -2,7 +2,9 @@
 
 
 from models import Decision, RefundRequest
-from mpesa import REFUNDS, get_order, get_payment
+from mpesa import  get_order, get_payment
+from store import refund_history
+
 
 
 def decide(req: RefundRequest)->Decision:
@@ -13,9 +15,16 @@ def decide(req: RefundRequest)->Decision:
         return Decision(action="reject", reason=f"no M-Pesa payment found with code {req.mpesa_code}")
     
     # 2. Already refunded?
-    if any(r["mpesa_code"] == req.mpesa_code for r in REFUNDS):
-        return Decision(action="reject", reason=f"payment {req.mpesa_code} was already refunded")
-    
+    # 2. Already refunded, or a refund in progress?
+    history = refund_history(req.mpesa_code)
+    sent = [e for e in history if e["event"] == "sent"]
+    if sent:
+        return Decision(action="reject",
+                        reason=f"payment {req.mpesa_code} was already refunded as {sent[0]['refund_id']} (case {sent[0]['case_id']})")
+    if history:  # claimed but not sent: in progress, or crashed mid-send. Never start a second refund.
+        return Decision(action="human",
+                        reason=f"a refund for {req.mpesa_code} is already in progress (case {history[0]['case_id']})")
+
     
     # 3. Does what the customer says match the payment? If not, a human looks.
     if payment["phone"] != req.phone:

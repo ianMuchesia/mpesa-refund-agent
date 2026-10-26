@@ -17,6 +17,20 @@ def _connect() -> sqlite3.Connection:
             data       TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
+    
+    # The money ledger. APPEND-ONLY: rows are added, never updated or deleted.
+    # UNIQUE(mpesa_code, event): at most one 'claimed' and one 'sent' per payment, ever.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS refund_events (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            mpesa_code TEXT NOT NULL,
+            case_id    INTEGER NOT NULL,
+            event      TEXT NOT NULL CHECK (event IN ('claimed', 'sent')),
+            refund_id  TEXT,
+            at         TEXT NOT NULL,
+            UNIQUE (mpesa_code, event)
+        )""")
+
     return conn
 
 
@@ -50,3 +64,41 @@ def unfinished_cases() -> list[dict]:
         rows = conn.execute(
             "SELECT data FROM cases WHERE status NOT IN ('closed', 'needs_human') ORDER BY id").fetchall()
     return [json.loads(r[0]) for r in rows]
+
+
+
+
+
+
+
+
+def _append_event(conn: sqlite3.Connection, mpesa_code: str, case_id: int, event: str, refund_id: str | None = None) -> None:
+    conn.execute("INSERT OR IGNORE INTO refund_events (mpesa_code, case_id, event, refund_id, at) VALUES (?, ?, ?, ?, ?)",
+                 (mpesa_code, case_id, event, refund_id, datetime.now().isoformat(timespec="seconds")))
+    
+    
+    
+def claim_refund(mpesa_code: str, case_id: int) -> int:
+    """Append 'claimed' BEFORE sending money. Only the first claim per payment is kept.
+    Returns the id of the case that owns the claim (may be another case)."""
+    with _connect() as conn:
+        _append_event(conn, mpesa_code, case_id, "claimed")
+        return conn.execute("SELECT case_id FROM refund_events WHERE mpesa_code = ? AND event = 'claimed'",
+                            (mpesa_code,)).fetchone()[0]
+        
+        
+def record_sent(mpesa_code: str, case_id: int, refund_id: str) -> None:
+    """Append 'sent' AFTER the money left."""
+    with _connect() as conn:
+        _append_event(conn, mpesa_code, case_id, "sent", refund_id)
+        
+        
+        
+def refund_history(mpesa_code: str) -> list[dict]:
+    """Every ledger event for one payment, oldest first. The current state is read from this."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT case_id, event, refund_id, at FROM refund_events WHERE mpesa_code = ? ORDER BY id",
+                            (mpesa_code,)).fetchall()
+    return [{"case_id": r[0], "event": r[1], "refund_id": r[2], "at": r[3]} for r in rows]
+
+

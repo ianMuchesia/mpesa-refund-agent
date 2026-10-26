@@ -11,11 +11,12 @@ After a crash, `resume` reads the saved status and carries on from there.
 """
 
 import sys
+import os
 
 from decide import decide
 from extract import extract
 from mpesa import get_payment, send_refund
-from store import create_case, save_case, unfinished_cases
+from store import claim_refund, create_case, record_sent, save_case, unfinished_cases
 from models import RefundRequest
 
 
@@ -71,8 +72,26 @@ def step_approve(case: dict) -> None:
         
         
 def step_send(case: dict) -> None:
-    refund_id = send_refund(case["refund_to"], case["refund_amount"], case["request"]["mpesa_code"])
+    code = case["request"]["mpesa_code"]
+    # Lock 1 (ours): claim the payment in the append-only ledger BEFORE any money moves.
+    owner = claim_refund(code, case["id"])
+    
+    if owner != case["id"]:
+        advance(case, "needs_human", reason=f"case {owner} is already refunding {code}",
+                reply="Thanks. A teammate will look into this and get back to you.")
+        return
+    # Lock 2 (Safaricom's): same key every time for this payment, so a retry after a crash can never pay twice.
+    refund_id = send_refund(case["refund_to"], case["refund_amount"], idempotency_key=f"refund-{code}")
+
+
+    
+    if os.getenv("CRASH_AFTER_SEND"):  # "break it" switch: die right after the money left
+        print("  CRASH! (simulated) after sending, before saving", flush=True)
+        os._exit(1)
+    record_sent(code, case["id"], refund_id)
     advance(case, "refunded", refund_id=refund_id)
+
+
     
     
     
