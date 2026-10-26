@@ -1,10 +1,23 @@
 """Journey 1: one refund case, start to finish, in one run."""
 
+
+"""Journey 2: a refund case that survives the program stopping.
+
+Each status has one step. A step does its work, then moves the case to the next status and SAVES it.
+After a crash, `resume` reads the saved status and carries on from there.
+
+    python workflow.py new "message"   # start a new case
+    python workflow.py resume          # continue every unfinished case
+"""
+
 import sys
 
 from decide import decide
 from extract import extract
 from mpesa import get_payment, send_refund
+from store import create_case, save_case, unfinished_cases
+from models import RefundRequest
+
 
 
 def advance(case: dict, status:str, **info)->None:
@@ -12,6 +25,7 @@ def advance(case: dict, status:str, **info)->None:
     
     
     case.update(info,status=status)
+    save_case(case)
     print(f"[{status}] {info}")
     
     
@@ -22,47 +36,84 @@ def staff_approves(case:dict)->bool:
     return input( "approve? [y/N]").strip().lower() == "y"
 
 
-def run_case(message: str)->dict:
-    case = {"message":message, "status":"new"}
-    
-    
-    #1. Qwen copies the details out of the message
-    req = extract(message)
+
+# --- one function per step. Each reads ONLY from the case: after a restart, nothing else exists. ---
+
+def step_extract(case: dict) -> None:
+    req = extract(case["message"])
     advance(case, "extracted", request=req.model_dump())
     
-    #2-3 Code checks them against our records and decides
+    
+    
+    
+def step_decide(case: dict) -> None:
+    req = RefundRequest(**case["request"])
     decision = decide(req)
-    advance(case, "decided", action=decision.action, reason=decision.reason)
     if decision.action == "reject":
-        advance(case, "closed",reply=f"Sorry we cant refund this: {decision.reason}.")
-        return case
-    if decision.action == "human":
+        advance(case, "closed", reason=decision.reason, reply=f"Sorry, we can't refund this: {decision.reason}.")
+    elif decision.action == "human":
+        advance(case, "needs_human", reason=decision.reason,
+                reply="Thanks. A teammate will look into this and get back to you.")
+    else:
+        # Phone and amount come from OUR records, never from the customer.
+        payment = get_payment(req.mpesa_code)
+        advance(case, "waiting_approval", reason=decision.reason,
+                refund_to=payment["phone"], refund_amount=payment["amount"])
+        
+        
+        
+        
+def step_approve(case: dict) -> None:
+    if staff_approves(case):
+        advance(case, "approved")
+    else:
         advance(case, "needs_human", reply="Thanks. A teammate will look into this and get back to you.")
-        return case
-    
-    # 4. A staff member approves. Phone and amount come from OUR records, never from the customer.
-    payment = get_payment(req.mpesa_code)
-    advance(case, "waiting_approval", refund_to=payment["phone"], refund_amount=payment["amount"])
-    if not staff_approves(case):
-        advance(case, "needs_human", reply="Thanks. A teammate will look into this and get back to you.")
-        return case
-    
-    
-    # 5. Send the money
-    refund_id = send_refund(payment["phone"], payment["amount"], req.mpesa_code)
+        
+        
+def step_send(case: dict) -> None:
+    refund_id = send_refund(case["refund_to"], case["refund_amount"], case["request"]["mpesa_code"])
     advance(case, "refunded", refund_id=refund_id)
     
-    # 6-7. Tell the customer and close. A fixed sentence: nothing for a model to make up.
-    advance(case, "closed", reply=f"Done! We've sent KSh {payment['amount']} back to {payment['phone']} (ref {refund_id}).")
-    return case
+    
+    
+def step_reply(case: dict) -> None:
+    advance(case, "closed",
+            reply=f"Done! We've sent KSh {case['refund_amount']} back to {case['refund_to']} (ref {case['refund_id']}).")
+    
+    
+    
+    
+
+# Which step runs for each status. 'closed' and 'needs_human' have no step: the case is finished.
+STEPS = {
+    "new": step_extract,
+    "extracted": step_decide,
+    "waiting_approval": step_approve,
+    "approved": step_send,
+    "refunded": step_reply,
+}
+
+
+def run(case: dict) -> None:
+    while case["status"] in STEPS:
+        STEPS[case["status"]](case)
+    print(f"  CUSTOMER SEES: {case['reply']}")
+
+
+
+
 
 
 if __name__ == "__main__":
-    msg = sys.argv[1] if len(sys.argv) > 1 else (
-        "M-Pesa took my money but my order says unpaid. My number is 0712345678, "
-        "code QJK3XYZ12A, KSh 2,500, order 1042.")
-    case = run_case(msg)
-    print(f"\nCUSTOMER SEES: {case['reply']}")
-        
-    
-
+    command = sys.argv[1] if len(sys.argv) > 1 else "new"
+    if command == "new":
+        msg = sys.argv[2] if len(sys.argv) > 2 else (
+            "M-Pesa took my money but my order says unpaid. My number is 0712345678, "
+            "code QJK3XYZ12A, KSh 2,500, order 1042.")
+        run(create_case(msg))
+    elif command == "resume":
+        cases = unfinished_cases()
+        print(f"{len(cases)} unfinished case(s)")
+        for case in cases:
+            print(f"\nresuming case {case['id']} from '{case['status']}'")
+            run(case)

@@ -78,7 +78,7 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 
 - [ ] Leftover: clarify route + 3 vague eval cases (first project)
 - [x] Journey 1: happy path
-- [ ] Journey 2: survive a crash
+- [x] Journey 2: survive a crash
 - [ ] Journey 3: never pay twice
 - [ ] Journey 4: wait for a human
 - [ ] Journey 5: missing details
