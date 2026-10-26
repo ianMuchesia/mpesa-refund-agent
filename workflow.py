@@ -12,11 +12,11 @@ After a crash, `resume` reads the saved status and carries on from there.
 
 import sys
 import os
-
+from datetime import datetime
 from decide import decide
 from extract import extract
 from mpesa import get_payment, send_refund
-from store import claim_refund, create_case, record_sent, save_case, unfinished_cases
+from store import cases_with_status, claim_refund, create_case, load_case, record_sent, save_case, unfinished_cases
 from models import RefundRequest
 
 
@@ -59,16 +59,14 @@ def step_decide(case: dict) -> None:
         # Phone and amount come from OUR records, never from the customer.
         payment = get_payment(req.mpesa_code)
         advance(case, "waiting_approval", reason=decision.reason,
-                refund_to=payment["phone"], refund_amount=payment["amount"])
+                refund_to=payment["phone"], refund_amount=payment["amount"],
+                reply="We've confirmed your payment. A teammate will approve your refund shortly.")
+
         
         
         
         
-def step_approve(case: dict) -> None:
-    if staff_approves(case):
-        advance(case, "approved")
-    else:
-        advance(case, "needs_human", reply="Thanks. A teammate will look into this and get back to you.")
+
         
         
 def step_send(case: dict) -> None:
@@ -107,10 +105,28 @@ def step_reply(case: dict) -> None:
 STEPS = {
     "new": step_extract,
     "extracted": step_decide,
-    "waiting_approval": step_approve,
+  
     "approved": step_send,
     "refunded": step_reply,
 }
+
+
+def staff_decision(case_id: int, approve: bool, staff: str) -> None:
+    """Called whenever staff act: minutes or days later, from a separate command."""
+    case = load_case(case_id)
+    if case is None:
+        print(f"no case {case_id}")
+        return
+    if case["status"] != "waiting_approval":  # approve twice, or approve a closed case: refuse
+        print(f"case {case_id} is '{case['status']}', not waiting for approval. Nothing done.")
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    if approve:
+        advance(case, "approved", approved_by=staff, approved_at=now)
+    else:
+        advance(case, "needs_human", rejected_by=staff, rejected_at=now,
+                reply="Thanks. A teammate will look into this and get back to you.")
+    run(case)  # carry on from wherever the case is now
 
 
 def run(case: dict) -> None:
@@ -136,3 +152,10 @@ if __name__ == "__main__":
         for case in cases:
             print(f"\nresuming case {case['id']} from '{case['status']}'")
             run(case)
+            
+            
+    elif command == "pending":
+        for case in cases_with_status("waiting_approval"):
+            print(f"  case {case['id']}: KSh {case['refund_amount']} to {case['refund_to']} | {case['reason']}")
+    elif command in ("approve", "reject"):
+        staff_decision(int(sys.argv[2]), approve=(command == "approve"), staff=sys.argv[3])

@@ -62,8 +62,19 @@ def load_case(case_id: int) -> dict | None:
 def unfinished_cases() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT data FROM cases WHERE status NOT IN ('closed', 'needs_human') ORDER BY id").fetchall()
+                       # waiting_approval is not "unfinished work": it's parked until a staff member acts.
+            "SELECT data FROM cases WHERE status NOT IN ('closed', 'needs_human', 'waiting_approval') ORDER BY id").fetchall()
+
     return [json.loads(r[0]) for r in rows]
+
+
+
+
+def cases_with_status(status: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT data FROM cases WHERE status = ? ORDER BY id", (status,)).fetchall()
+    return [json.loads(r[0]) for r in rows]
+
 
 
 

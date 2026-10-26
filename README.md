@@ -80,7 +80,7 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 1: happy path
 - [x] Journey 2: survive a crash
 - [x] Journey 3: never pay twice
-- [ ] Journey 4: wait for a human
+- [x] Journey 4: wait for a human
 - [ ] Journey 5: missing details
 - [ ] Journey 6: private data
 - [ ] Journey 7: budget
