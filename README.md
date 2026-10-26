@@ -49,6 +49,15 @@ by hand, we'll look at LangGraph or Temporal and you'll see exactly what they do
 
 The files appear as the journeys need them. Nothing is written up front.
 
+### Found while building
+
+- **Journey 1:** with every field required, Qwen **invents** a missing M-Pesa code that fits the pattern
+  (`KSH2500000` built from "KSh 2,500"). The records stop the money (no such payment -> reject), but a real
+  customer is wrongly told "no payment found". Allowing `null` stopped the invented code, but qwen2.5:3b still
+  missed the amount and mixed up fields. **Plan for Journey 5:** regex in code for the fixed-format details
+  (phone, M-Pesa code, order number), Qwen only for the messy part (amounts like "2.5k"), ask the customer for
+  anything still missing.
+
 ## Setup
 
 Same as the first project: Python 3.10+, Ollama with `qwen2.5:3b`.
@@ -68,7 +77,7 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 ## Progress
 
 - [ ] Leftover: clarify route + 3 vague eval cases (first project)
-- [ ] Journey 1: happy path
+- [x] Journey 1: happy path
 - [ ] Journey 2: survive a crash
 - [ ] Journey 3: never pay twice
 - [ ] Journey 4: wait for a human
