@@ -40,9 +40,39 @@ def staff_approves(case:dict)->bool:
 
 # --- one function per step. Each reads ONLY from the case: after a restart, nothing else exists. ---
 
+# What we ask for when a detail is missing. Fixed sentences: nothing for a model to get wrong.
+ASK_FOR = {
+    "mpesa_code": "the M-Pesa code from your confirmation SMS (10 letters and numbers, e.g. QJK3XYZ12A)",
+    "amount": "the amount you paid (e.g. 2500)",
+    "phone": "the phone number you paid from",
+    "order_id": "your 4-digit order number",
+}
+MAX_ASKS = 3  # after this many questions, a human takes over
+
 def step_extract(case: dict) -> None:
-    req = extract(case["message"])
-    advance(case, "extracted", request=req.model_dump())
+    # Read the newest message: the first one, or the customer's latest reply.
+    text = case["replies"][-1] if case.get("replies") else case["message"]
+    details = case.get("details", {})
+    for field, value in extract(text).items():
+        if value is not None:  # never overwrite a detail we already have with "not found"
+            details[field] = value
+
+    missing = [f for f in ASK_FOR if details.get(f) is None]
+    if not missing:
+        req = RefundRequest(**details)
+        advance(case, "extracted", details=details, request=req.model_dump())
+        return
+
+    asks = case.get("asks", 0) + 1
+    if asks > MAX_ASKS:
+        advance(case, "needs_human", details=details,
+                reason=f"still missing {', '.join(missing)} after {MAX_ASKS} questions",
+                reply="Thanks. A teammate will contact you to complete this.")
+        return
+    lines = "\n".join(f"- {ASK_FOR[f]}" for f in missing)
+    advance(case, "waiting_customer", details=details, missing=missing, asks=asks,
+            reply=f"Thanks! To check your payment, please send:\n{lines}")
+
     
     
     
@@ -104,6 +134,8 @@ def step_reply(case: dict) -> None:
 # Which step runs for each status. 'closed' and 'needs_human' have no step: the case is finished.
 STEPS = {
     "new": step_extract,
+    "customer_replied": step_extract,
+
     "extracted": step_decide,
   
     "approved": step_send,
@@ -127,6 +159,22 @@ def staff_decision(case_id: int, approve: bool, staff: str) -> None:
         advance(case, "needs_human", rejected_by=staff, rejected_at=now,
                 reply="Thanks. A teammate will look into this and get back to you.")
     run(case)  # carry on from wherever the case is now
+    
+    
+    
+def customer_reply(case_id: int, text: str) -> None:
+    """Called when the customer answers our question: minutes or days later."""
+    case = load_case(case_id)
+    if case is None:
+        print(f"no case {case_id}")
+        return
+    if case["status"] != "waiting_customer":
+        print(f"case {case_id} is '{case['status']}', not waiting for the customer. Nothing done.")
+        return
+    case.setdefault("replies", []).append(text)
+    advance(case, "customer_replied")
+    run(case)
+
 
 
 def run(case: dict) -> None:
@@ -159,3 +207,7 @@ if __name__ == "__main__":
             print(f"  case {case['id']}: KSh {case['refund_amount']} to {case['refund_to']} | {case['reason']}")
     elif command in ("approve", "reject"):
         staff_decision(int(sys.argv[2]), approve=(command == "approve"), staff=sys.argv[3])
+        
+    elif command == "reply":
+        customer_reply(int(sys.argv[2]), sys.argv[3])
+

@@ -57,6 +57,12 @@ The files appear as the journeys need them. Nothing is written up front.
   missed the amount and mixed up fields. **Plan for Journey 5:** regex in code for the fixed-format details
   (phone, M-Pesa code, order number), Qwen only for the messy part (amounts like "2.5k"), ask the customer for
   anything still missing.
+- **Journey 5:** qwen2.5:3b scored **2/8** reading Swahili amounts ("elfu mbili mia tano" -> 2000, "elfu kumi" -> 11),
+  and teaching it the number words in the prompt made it **worse** (it copied the order number). You can't prompt
+  a model into a skill it doesn't have. Swahili numbers are a small fixed vocabulary, so `amounts.py` reads them
+  in code: **16/16**, instant, free. Extraction is now all code (regex + `amounts.py`); missing details are `None`
+  and the customer is asked. **Lesson: use the model only where nothing else works.** Qwen's next job: understanding
+  replies that match no pattern ("I can't find the code").
 
 ## Setup
 
@@ -81,7 +87,7 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 2: survive a crash
 - [x] Journey 3: never pay twice
 - [x] Journey 4: wait for a human
-- [ ] Journey 5: missing details
+- [ ] Journey 5: missing details (done: A code extraction, B1 ask and wait; left: B2 Qwen understands replies)
 - [ ] Journey 6: private data
 - [ ] Journey 7: budget
 - [ ] Journey 8: workflow tests
