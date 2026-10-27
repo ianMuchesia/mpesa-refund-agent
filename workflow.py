@@ -18,6 +18,8 @@ from extract import extract
 from mpesa import get_payment, send_refund
 from store import cases_with_status, claim_refund, create_case, load_case, record_sent, save_case, unfinished_cases
 from models import RefundRequest
+from intent import reply_intent
+
 
 
 
@@ -49,19 +51,51 @@ ASK_FOR = {
 }
 MAX_ASKS = 3  # after this many questions, a human takes over
 
+# Extra help we put in front of the question, depending on what Qwen thinks the customer meant.
+HINTS = {
+    "cant_find_code": ("No problem. Your M-Pesa code is the first word of the confirmation SMS from M-PESA, "
+                       "e.g. \"QJK3XYZ12A Confirmed. Ksh2,500.00 sent to...\". You can also find it in your M-PESA statement.\n\n"),
+    "other_topic": "I can only help with M-Pesa payments that didn't show on an order.\n\n",
+}
+
+
 def step_extract(case: dict) -> None:
     # Read the newest message: the first one, or the customer's latest reply.
     text = case["replies"][-1] if case.get("replies") else case["message"]
     details = case.get("details", {})
-    for field, value in extract(text).items():
-        if value is not None:  # never overwrite a detail we already have with "not found"
-            details[field] = value
+    found = {field: value for field, value in extract(text).items() if value is not None}
+    details.update(found)  # never overwrite a detail we already have with "not found"
+
 
     missing = [f for f in ASK_FOR if details.get(f) is None]
     if not missing:
         req = RefundRequest(**details)
         advance(case, "extracted", details=details, request=req.model_dump())
         return
+    
+    
+        # Code found nothing new: only now do we ask Qwen what the customer means. Qwen picks a label; code acts.
+    hint = ""
+    if not found:
+        intent = reply_intent(text)
+        case.setdefault("intents", []).append({"intent": intent.intent, "reason": intent.reason})
+        if intent.intent == "wants_human":
+            advance(case, "needs_human", details=details, reason="customer asked for a person",
+                    reply="Sure. A teammate will contact you shortly.")
+            return
+        # Rule 1: can't find the code a second time -> a person looks the payment up.
+        if [i["intent"] for i in case["intents"]].count("cant_find_code") >= 2:
+            advance(case, "needs_human", details=details, reason="customer can't find the M-Pesa code (said it twice)",
+                    reply="No worries. A teammate will look up your payment and get back to you.")
+            return
+        # Rule 2: the first message is just a greeting or another topic -> a short friendly question, not 4 questions.
+        if intent.intent == "other_topic" and not case.get("replies"):
+            advance(case, "waiting_customer", details=details, missing=missing,
+                    reply="Hi! I help with M-Pesa payments that didn't show on an order. Is that what happened?")
+            return
+        hint = HINTS.get(intent.intent, "")
+
+
 
     asks = case.get("asks", 0) + 1
     if asks > MAX_ASKS:
@@ -71,7 +105,10 @@ def step_extract(case: dict) -> None:
         return
     lines = "\n".join(f"- {ASK_FOR[f]}" for f in missing)
     advance(case, "waiting_customer", details=details, missing=missing, asks=asks,
-            reply=f"Thanks! To check your payment, please send:\n{lines}")
+            reply=f"{hint}To check your payment, please send:\n{lines}")
+    
+    
+
 
     
     
