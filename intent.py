@@ -3,6 +3,7 @@ import re
 import json
 import urllib.request
 from typing import Literal
+from redact import redact
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -54,7 +55,10 @@ def reply_intent(text: str) -> ReplyIntent:
         return ReplyIntent(intent="gives_details", reason="code rule: short yes")
     
     # Only open-ended replies reach the model.
-    raw = ask_qwen([{"role": "system", "content": INTENT_PROMPT}, {"role": "user", "content": text}],
+    safe = redact(text)  # the model never sees real phone numbers, codes or IDs
+    print(f"  QWEN SEES: {safe}")
+    raw = ask_qwen([{"role": "system", "content": INTENT_PROMPT}, {"role": "user", "content": safe}],
+
                    ReplyIntent.model_json_schema())
     
     try:
