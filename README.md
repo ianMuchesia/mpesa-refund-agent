@@ -46,13 +46,15 @@ keeps going while there is a step for the current status. To trace a case: **fin
                                                                 │
                                                                 ▼
                                                             refunded ──► step_reply ──► closed
+
+   any working status ──(more than MAX_STEPS steps in one run)──► stuck
 ```
 
 | Kind | Statuses | Who moves it on |
 |---|---|---|
 | **Working**: a step runs right away | `new`, `customer_replied`, `extracted`, `approved`, `refunded` | `run()` |
 | **Waiting**: parked, the program ends | `waiting_customer`, `waiting_approval` | the customer (`reply`) or staff (`approve` / `reject`) |
-| **Finished** | `closed`, `needs_human` | nobody |
+| **Finished** | `closed`, `needs_human`, `stuck` | nobody (`stuck` = our code is broken: a developer looks) |
 
 Commands: `new "msg"`, `reply <id> "msg"`, `pending`, `approve <id> <name>`, `reject <id> <name>`, `resume`.
 
@@ -117,6 +119,16 @@ The files appear as the journeys need them. Nothing is written up front.
   -> code read 50000 as the amount; when the attacker then sent the real code, phone and order, `decide.py` stopped
   it (50000 vs records 2500 -> needs_human). Three locks: records check, refund amount taken from records only,
   staff approval. **Lesson: injection is stopped by design (the model can't move money), not by the prompt.**
+- **Journey 7:** two guards. (A) `run()` stops after `MAX_STEPS = 10` and sets the new status `stuck` (our code is
+  broken: a developer looks, `resume` skips it). It lives in the engine so a buggy step can't skip it; LangGraph's
+  `recursion_limit` and the Agents SDK's `max_turns` are the same idea. (B) `MAX_MODEL_CALLS = 5` per case, checked
+  **before** each call; `model_calls` and `tokens` are saved in the case right after each call, so a crash can't
+  reset the budget. **Break it:** a step that forgot to `advance` -> 9 loops then `stuck`; with the bug after the
+  Qwen call -> 5 calls, 1005 tokens, then `needs_human`.
+  **Found:** "hi" costs 201 tokens: 174 in (our prompt ~150, wrapping ~20, "hi" 1) + 27 out (mostly the `reason`).
+  You pay for your prompt on every call, and output costs more than input. A business rule (code not found twice)
+  also stopped a loop, before the budget. With a loop after the Qwen call, the budget fires before the step limit,
+  so a code bug shows as `needs_human`, not `stuck`: the clue is the same intent repeated in the case.
 
 ## Setup
 
@@ -143,9 +155,10 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 4: wait for a human
 - [x] Journey 5: missing details
 - [x] Journey 6: private data
-- [ ] Journey 7: budget
+- [x] Journey 7: budget
 - [ ] Journey 8: workflow tests
 - [ ] Compare with LangGraph / Temporal
 
-**Next step:** Journey 7 (budget): count model calls per case, stop at a limit and hand the case to a human.
+**Next step:** Journey 8 (workflow tests): run whole cases (happy path, crash, replies, injection, stuck loop)
+as automatic tests. Idea saved for later: whole-reply greetings ("hi", "habari") as a code rule to save tokens.
 Start each session with `git pull`; end it with commit + push (work and home machines take turns).

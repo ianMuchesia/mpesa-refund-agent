@@ -50,6 +50,8 @@ ASK_FOR = {
     "order_id": "your 4-digit order number",
 }
 MAX_ASKS = 3  # after this many questions, a human takes over
+MAX_MODEL_CALLS = 5  # per case, for its whole life (saved in the case, so a crash can't reset it)
+
 
 # Extra help we put in front of the question, depending on what Qwen thinks the customer meant.
 HINTS = {
@@ -77,8 +79,21 @@ def step_extract(case: dict) -> None:
         # Code found nothing new: only now do we ask Qwen what the customer means. Qwen picks a label; code acts.
     hint = ""
     if not found:
-        intent = reply_intent(text)
-        case.setdefault("intents", []).append({"intent": intent.intent, "reason": intent.reason})
+        # Budget: checked BEFORE the call. The counter lives in the case, so it survives crashes and days-long gaps.
+        if case.get("model_calls", 0) >= MAX_MODEL_CALLS:
+            advance(case, "needs_human", details=details,
+                    reason=f"model budget used up: {case['model_calls']} calls, {case.get('tokens', 0)} tokens",
+                    reply="Thanks. A teammate will contact you to complete this.")
+            return
+        intent, tokens = reply_intent(text)
+        if tokens:  # a real model call (code rules cost 0)
+            case["model_calls"] = case.get("model_calls", 0) + 1
+            case["tokens"] = case.get("tokens", 0) + tokens
+            save_case(case)  # save the spend right away: if we crash now, the money is still spent
+        case.setdefault("intents", []).append({"intent": intent.intent, "reason": intent.reason, "tokens": tokens})
+        
+        
+
         if intent.intent == "wants_human":
             advance(case, "needs_human", details=details, reason="customer asked for a person",
                     reply="Sure. A teammate will contact you shortly.")
@@ -115,6 +130,8 @@ def step_extract(case: dict) -> None:
     
     
 def step_decide(case: dict) -> None:
+    
+
     req = RefundRequest(**case["request"])
     decision = decide(req)
     if decision.action == "reject":
@@ -212,14 +229,22 @@ def customer_reply(case_id: int, text: str) -> None:
     advance(case, "customer_replied")
     run(case)
 
+MAX_STEPS = 10  # a healthy case needs about 5 steps; more means a step forgot to move the case on
+
+
+
 
 
 def run(case: dict) -> None:
+    steps = 0
     while case["status"] in STEPS:
+        steps += 1
+        if steps > MAX_STEPS:  # kill-switch: lives in the engine, so a buggy step can't skip it
+            advance(case, "stuck", reason=f"stopped after {MAX_STEPS} steps: '{case['status']}' never moved on",
+                    reply="Thanks. A teammate will look into this and get back to you.")
+            break
         STEPS[case["status"]](case)
     print(f"  CUSTOMER SEES: {case['reply']}")
-
-
 
 
 

@@ -63,7 +63,7 @@ def unfinished_cases() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
                        # waiting_approval is not "unfinished work": it's parked until a staff member acts.
-                        "SELECT data FROM cases WHERE status NOT IN ('closed', 'needs_human', 'waiting_approval', 'waiting_customer') ORDER BY id").fetchall()
+                        "SELECT data FROM cases WHERE status NOT IN ('closed', 'needs_human', 'waiting_approval', 'waiting_customer','stuck') ORDER BY id").fetchall()
 
 
     return [json.loads(r[0]) for r in rows]
