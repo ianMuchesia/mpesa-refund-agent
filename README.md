@@ -129,6 +129,17 @@ The files appear as the journeys need them. Nothing is written up front.
   You pay for your prompt on every call, and output costs more than input. A business rule (code not found twice)
   also stopped a loop, before the budget. With a loop after the Qwen call, the budget fires before the step limit,
   so a code bug shows as `needs_human`, not `stuck`: the clue is the same intent repeated in the case.
+- **Journey 8:** `tests.py` runs 12 whole-case tests in ~2 seconds, no Ollama needed. `FakeQwen` replaces only
+  `ask_qwen` (the lowest piece), so code rules, `redact()` and token counting still run for real; it answers a
+  chosen label and keeps a notebook (`seen`) of what would have left the machine. Each test runs in an empty temp
+  folder (fresh databases). The crash test runs a real crash in a separate process, then resumes and counts payouts.
+  **Workflow tests** (fake model, pass/fail, every change) are not **model evals** (real model, a score, when the
+  prompt or model changes). The fake can play the model's *worst* answer: "the injection fooled it" -> money still
+  safe. **Found by deleting each guard (mutation testing):** 3 tests passed with their guard gone: the privacy test
+  never reached the model (extract caught the code first), the budget test was blocked by `MAX_ASKS` first, and the
+  ledger locks hid the missing "already refunded" check. **Lesson: a test you have never seen fail proves nothing;
+  assert the model was actually called before trusting what it didn't see.**
+  Not covered: removing the step limit makes the tests hang (an infinite loop) instead of failing.
 
 ## Setup
 
@@ -156,9 +167,11 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 5: missing details
 - [x] Journey 6: private data
 - [x] Journey 7: budget
-- [ ] Journey 8: workflow tests
+- [x] Journey 8: workflow tests (`python tests.py`)
 - [ ] Compare with LangGraph / Temporal
 
-**Next step:** Journey 8 (workflow tests): run whole cases (happy path, crash, replies, injection, stuck loop)
-as automatic tests. Idea saved for later: whole-reply greetings ("hi", "habari") as a code rule to save tokens.
+**Next step:** compare with LangGraph / Temporal: what would they have done for us (saved state, resume, waiting
+for a human, recursion limit)? Run `python tests.py` first on any machine to check everything works.
+Ideas saved for later: whole-reply greetings ("hi", "habari") as a code rule to save tokens; try Presidio for
+names; a model-eval file for `intent.py` (the B2 16-case score) next to `tests.py`.
 Start each session with `git pull`; end it with commit + push (work and home machines take turns).
