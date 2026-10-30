@@ -1,0 +1,2 @@
+when,model,runs,score,cases,flaky,tokens,seconds
+2026-10-30T07:22,qwen2.5:3b,3,14.0,16,0,7395,196

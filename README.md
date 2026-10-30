@@ -140,6 +140,13 @@ The files appear as the journeys need them. Nothing is written up front.
   ledger locks hid the missing "already refunded" check. **Lesson: a test you have never seen fail proves nothing;
   assert the model was actually called before trusting what it didn't see.**
   Not covered: removing the step limit makes the tests hang (an infinite loop) instead of failing.
+- **Model eval (`evals.py`):** the 16 B2 replies as a **golden set**, run against the real model, 3 runs per
+  model case (code-rule cases run once), with tokens and time per run. Every run is appended to
+  `eval_history.csv`; below `BASELINE = 13` it exits 1 (a regression gate). `python evals.py <model>` runs the
+  same cases on another model. **Found:** temperature 0 is *mostly* repeatable, not fully: the same setup scored
+  14, 13, 13 and 14 within half an hour. Back-to-back repeats agreed; the flips came between separate runs, so the
+  history matters as much as the repeats. The misses are Swahili sentences with no keyword ("nililipa jana
+  jioni"), and all of them are cheap: **accuracy 13-14/16, harmful mistakes 0/16.** Judge a model by both numbers.
 
 ## Compared with LangGraph and Temporal
 
@@ -214,8 +221,11 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 8: workflow tests (`python tests.py`)
 - [x] Compare with LangGraph / Temporal (`graph_version.py`)
 
-**Project done.** Run `python tests.py` first on any machine (12/12, no Ollama needed).
-**Next step:** a model-eval file for `intent.py` (the 16 B2 cases as a repeatable score), then run the same eval
-on a bigger model to compare. Other ideas: whole-reply greetings ("hi", "habari") as a code rule to save tokens;
+- [x] Model eval for `intent.py` (`python evals.py`, history in `eval_history.csv`)
+
+**Project done.** Run `python tests.py` first on any machine (12/12, no Ollama needed); `python evals.py` when
+the prompt or model changes (needs Ollama, ~3 minutes).
+**Next step:** run `evals.py` on a bigger model when one is available (e.g. at work, or a hosted model) and compare
+score, tokens and time. Other ideas: whole-reply greetings ("hi", "habari") as a code rule to save tokens;
 a "customer never replied" expiry (`waiting_since`); try Presidio for names. Then ask the adviser for project 3.
 Start each session with `git pull`; end it with commit + push (work and home machines take turns).
