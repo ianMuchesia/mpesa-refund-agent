@@ -141,6 +141,45 @@ The files appear as the journeys need them. Nothing is written up front.
   assert the model was actually called before trusting what it didn't see.**
   Not covered: removing the step limit makes the tests hang (an infinite loop) instead of failing.
 
+## Compared with LangGraph and Temporal
+
+`graph_version.py` rebuilds the approval part (extract -> decide -> pause for staff -> send) with LangGraph,
+calling the same `extract()`, `decide()`, `send_refund()` and ledger.
+
+```
+python graph_version.py new 101 "code QJK3XYZ12A, KSh 2,500, from 0712345678, order 1042"
+python graph_version.py approve 101 alice      # or: reject 101 bob
+python graph_version.py resume 101             # after a crash (set CRASH_AFTER_SEND=1 on approve)
+```
+It prints each `NODE` result and each `ARROW` choice (`graph.stream`), so the flow can be traced.
+
+| What we built by hand | Our code | LangGraph | Temporal |
+|---|---|---|---|
+| Steps | `step_*` functions | nodes | activities (the work) |
+| What runs next | `STEPS` + `status` | edges, `add_conditional_edges` | the workflow function, top to bottom |
+| Save after every step | `advance()` -> `save_case()` | checkpointer (`SqliteSaver`) | event history on the Temporal server |
+| Resume after a crash | `resume` + `unfinished_cases()` | `invoke(None, config)`: re-runs the unfinished **node** | **replays** the workflow; finished activities are read from history |
+| Wait days for staff | `waiting_approval` + `staff_decision()` | `interrupt()` + `Command(resume=...)` | signals + `wait_condition` |
+| "Customer never replied" | **missing** (waits forever) | missing | durable timers (`timeout=timedelta(days=3)`) |
+| Step limit | `MAX_STEPS` | `recursion_limit` | workflow timeouts |
+| Retries | none | basic | built in, with policies |
+| Setup | none | `pip install` | `pip install` + a server |
+
+**What no framework does for you:** `extract.py`, `amounts.py`, `decide.py` (business rules), `redact.py`,
+`intent.py` (what the model sees and is asked), the model budget, the money ledger and the idempotency key, and
+`tests.py`. **The framework is the engine; the brain and the locks are yours.**
+
+**Found while comparing:**
+- On resume LangGraph re-runs the whole node from the top: `approval_node` printed twice (anything before
+  `interrupt()` runs twice), and after a crash `send_node` ran again; only the Safaricom idempotency key stopped
+  a double payment. **A framework saves state; it does not make your steps safe to repeat.** Temporal is the same:
+  activities are retried, so they must be idempotent.
+- After a crash the three records disagreed (LangGraph: "send not run"; ledger: "claimed"; Safaricom: "paid").
+  The framework knew *where* to restart; only our locks knew *the money had already left*.
+- LangGraph: less code, more hidden rules. Building by hand first is what made those rules readable.
+- Temporal was not installed: it's mostly infrastructure (server, workers, replay rules), and its one new idea
+  for us, durable timers, can be added to our own code (save `waiting_since`, expire old cases).
+
 ## Setup
 
 Same as the first project: Python 3.10+, Ollama with `qwen2.5:3b`.
@@ -151,6 +190,11 @@ python -m venv .venv
 ```
 
 (On Linux: `python3 -m venv .venv`, then `.venv/bin/python -m pip install pydantic`.)
+
+Only for `graph_version.py`: `.venv\Scripts\python -m pip install langgraph==1.2.18 langgraph-checkpoint-sqlite==3.1.2`.
+For a slow-internet Linux machine, download the Linux wheels at work and copy them (not into git):
+`pip download langgraph==1.2.18 langgraph-checkpoint-sqlite==3.1.2 pydantic -d wheels-linux --platform manylinux2014_x86_64 --python-version <home version> --only-binary=:all:`,
+then at home `pip install --no-index --find-links wheels-linux langgraph langgraph-checkpoint-sqlite pydantic`.
 
 ## Before starting: close off the first project
 
@@ -168,10 +212,10 @@ In `../qwen-playground`: add a **clarify** route for very short or vague message
 - [x] Journey 6: private data
 - [x] Journey 7: budget
 - [x] Journey 8: workflow tests (`python tests.py`)
-- [ ] Compare with LangGraph / Temporal
+- [x] Compare with LangGraph / Temporal (`graph_version.py`)
 
-**Next step:** compare with LangGraph / Temporal: what would they have done for us (saved state, resume, waiting
-for a human, recursion limit)? Run `python tests.py` first on any machine to check everything works.
-Ideas saved for later: whole-reply greetings ("hi", "habari") as a code rule to save tokens; try Presidio for
-names; a model-eval file for `intent.py` (the B2 16-case score) next to `tests.py`.
+**Project done.** Run `python tests.py` first on any machine (12/12, no Ollama needed).
+**Next step:** a model-eval file for `intent.py` (the 16 B2 cases as a repeatable score), then run the same eval
+on a bigger model to compare. Other ideas: whole-reply greetings ("hi", "habari") as a code rule to save tokens;
+a "customer never replied" expiry (`waiting_since`); try Presidio for names. Then ask the adviser for project 3.
 Start each session with `git pull`; end it with commit + push (work and home machines take turns).
